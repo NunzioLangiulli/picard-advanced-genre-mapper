@@ -1,0 +1,11 @@
+uuid = "05ad2959-1b89-49f1-8ff6-f02c9e295eb1"
+name = "Advanced Genre Mapper"
+description = "Automatically normalize album genres with editable spelling rules, selection of the most frequent complete genre list and an English options page."
+api = ["3.0"]
+version = "1.2.3"
+authors = ["Borunzio"]
+categories = ["metadata"]
+
+long_description = "Advanced Genre Mapper 1.2.3 by Borunzio. Normalize genre spelling, apply the most frequent complete genre list across an album, and review independent MusicBrainz sources before applying changes. Includes editable rules and an example tester. See README.md for setup, source selection, limitations and validation status."
+
+license = "MIT"
