@@ -1,4 +1,4 @@
-# Advanced Genre Mapper
+# Advanced Genre Mapper for MusicBrainz Picard
 
 **Version:** 1.2.3 · **Author:** Borunzio · **Target:** Picard 3.0.2
 
