@@ -170,3 +170,8 @@ Elettronica = Electronic
 Elettrinica = Electronic
 Reggaeton = Reggaetón
 Techno Kayo = Techno Kayō
+
+# One rule per genre also matches and, n, quoted n and ampersand variants.
+Rhythm&Blues = R&B
+Drum&Bass = Drum 'n' Bass
+RnB = R&B

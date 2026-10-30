@@ -23,6 +23,8 @@ class Controller:
         self.pending = WeakKeyDictionary()
         self.overrides = WeakKeyDictionary()
         self.mb_cache = {}
+        self.current_sources = WeakKeyDictionary()
+        self.written_genres = WeakKeyDictionary()
 
     def source(self, file):
         # Freeze inputs so a partial-album result cannot skew later votes.
@@ -47,6 +49,26 @@ class Controller:
         # The complete most frequent list is the fixed file-source policy.
         return choose(self.file_lists(album), tie='first', ignore_empty=True)
 
+    def current_lists(self, album):
+        """Read current file genres without counting our own output as new input."""
+        lists = []
+        for track in album.tracks:
+            candidates = []
+            for file in track.files:
+                current = list(file.metadata.getall('genre'))
+                if file not in self.current_sources or current != self.written_genres.get(file):
+                    self.current_sources[file] = current
+                candidates.append(self.normalized(self.current_sources[file]))
+            if candidates:
+                lists.append(next((value for value in candidates if value), []))
+        return lists
+
+    def automatic_choice(self, album):
+        # Keep original-file and current-value counts separate; never mix sources.
+        current_lists = self.current_lists(album)
+        original = self.file_choice(album)
+        return original if original is not None else choose(current_lists, tie='first', ignore_empty=True)
+
     def original_selected_list(self, album):
         """Return the first original file list represented by the selected normalized list."""
         selected = self.file_choice(album)
@@ -66,7 +88,7 @@ class Controller:
     def apply(self, album):
         try:
             result = (self.normalized(self.overrides[album]) if album in self.overrides
-                      else self.file_choice(album))
+                      else self.automatic_choice(album))
         except ValueError as error:
             self.api.logger.error('Invalid genre rules: %s', error)
             return
@@ -81,12 +103,16 @@ class Controller:
         value = result if cfg['output'] == 'multi' else '; '.join(result)
         album.metadata['genre'] = value
         for track in album.tracks:
+            # Leave unmatched track templates intact for files that arrive later.
+            if not track.files:
+                continue
             track.metadata['genre'] = value
             for file in track.files:
                 expected = result if cfg['output'] == 'multi' else ([value] if value else [])
                 if file.metadata.getall('genre') != expected:
                     file.metadata['genre'] = value
                     file.update()
+                self.written_genres[file] = list(file.metadata.getall('genre'))
             track.update()
         album.update()
 

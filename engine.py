@@ -4,7 +4,11 @@ import re
 
 
 def key(value):
-    return re.sub(r'[\s-]+', '', value).casefold()
+    """Match connector variants without changing letters inside ordinary words."""
+    value = value.casefold().translate(str.maketrans({'’': "'", '‘': "'", 'ʼ': "'"}))
+    value = value.replace("'n'", '&')
+    value = re.sub(r'(?<!\w)(?:and|n)(?!\w)', '&', value)
+    return re.sub(r'[\s-]+', '', value)
 
 
 def parse_rules(text):
@@ -19,7 +23,8 @@ def parse_rules(text):
             raise ValueError(f'Line {number}: invalid alias or preferred spelling.')
         normalized = key(alias)
         if normalized in rules and rules[normalized] != target:
-            raise ValueError(f'Line {number}: conflicting spelling for {alias}.')
+            raise ValueError(f'Line {number}: equivalent aliases have different output spellings '
+                             f'({rules[normalized]} / {target}). Use the same output spelling on both rules.')
         rules[normalized] = target
     return rules
 

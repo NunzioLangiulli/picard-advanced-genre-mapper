@@ -59,7 +59,47 @@ class Tests(unittest.TestCase):
         a.tracks[0].files[0].metadata['genre']='MusicBrainz suggestion'
         self.assertIsNone(self.c.file_choice(a))
         self.c.apply(a)
+        self.assertEqual(a.metadata['genre'],'MusicBrainz suggestion')
+    def test_lookup_genres_uniform_across_twelve_tracks(self):
+        a=self.album(['']*12)
+        for index,track in enumerate(a.tracks):
+            track.files[0].metadata['genre']='Electronica|IDM' if index<8 else 'Jazz'
+        plugin.ApplyAlbumGenres().callback([a])
+        self.assertTrue(all(t.files[0].metadata['genre']=='Electronic; IDM' for t in a.tracks))
+        self.assertIsNone(self.c.file_choice(a))
+        self.c.apply(a)
+        self.assertEqual(self.c.current_lists(a).count(['Jazz']),4)
+
+    def test_incremental_lookup_counts_ignore_own_output(self):
+        a=self.album(['',''])
+        for track,value in zip(a.tracks,['Jazz','Rap']):
+            track.files[0].metadata['genre']=value
+        self.c.apply(a)
+        incoming=self.album(['']).tracks[0]
+        incoming.album=a
+        incoming.files[0].metadata['genre']='Rap'
+        a.tracks.append(incoming)
+        self.c.apply(a)
+        self.assertEqual(a.metadata['genre'],'Rap')
+        self.assertTrue(all(t.files[0].metadata['genre']=='Rap' for t in a.tracks))
+
+    def test_late_lookup_and_empty_sources(self):
+        a=self.album(['',''])
+        self.c.apply(a)
         self.assertNotIn('genre',a.metadata)
+        a.tracks[0].files[0].metadata['genre']='Electronica'
+        plugin.before_save(self.api,a.tracks[0].files[0])
+        self.assertTrue(all(t.files[0].metadata['genre']=='Electronic' for t in a.tracks))
+
+    def test_original_priority_and_unmatched_template(self):
+        a=self.album(['Jazz','',''])
+        for track in a.tracks: track.files[0].metadata['genre']='Rap'
+        unmatched=Item(files=[],metadata=Metadata(genre='Ambient'),album=a)
+        a.tracks.append(unmatched)
+        self.c.apply(a)
+        self.assertEqual(a.metadata['genre'],'Jazz')
+        self.assertEqual(unmatched.metadata['genre'],'Ambient')
+
     def test_incremental_and_override(self):
         a=self.album(['Jazz','Rap'])
         self.c.apply(a)
@@ -147,6 +187,40 @@ class Tests(unittest.TestCase):
         self.cfg['output']='text'
         self.c.apply(a)
         self.assertEqual(a.tracks[0].files[0].metadata.getall('genre'),['Electronic; IDM'])
+
+    def test_connector_variants_preserve_chosen_spelling(self):
+        rules=plugin.parse_rules("Drum n Bass = Drum 'n' Bass")
+        for name in ["Drum 'n' bass", "Drum ‘n’ Bass", "Drum ’n’ Bass", "Drum ʼnʼ Bass",
+                     "Drum and Bass", "Drum & Bass", "Drum&Bass", "Drum n Bass",
+                     "Drum'n'Bass", "DRUM-N-BASS"]:
+            self.assertEqual(plugin.normalize([name],rules),["Drum 'n' Bass"])
+        rules=plugin.parse_rules('Drum & Bass = Drum and Bass')
+        self.assertEqual(plugin.normalize(["Drum 'n' Bass"],rules),['Drum and Bass'])
+
+    def test_connector_boundaries_and_conflicts(self):
+        from mapper.engine import key
+        self.assertNotEqual(key('Scandinavian'),key('Sc&inavian'))
+        self.assertNotEqual(key('Dance'),key('Da&ce'))
+        rules=plugin.parse_rules("Rock&Roll = Rock&Roll")
+        self.assertEqual(plugin.normalize(["Rock 'n' Roll"],rules),['Rock&Roll'])
+        self.assertEqual(plugin.normalize(['Unlisted and Style'],rules),['Unlisted and Style'])
+        with self.assertRaisesRegex(ValueError,'different output spellings'):
+            plugin.parse_rules("Drum n Bass = Drum n Bass\nDrum & Bass = Drum and Bass")
+        plugin.parse_rules("Drum n Bass = Drum and Bass\nDrum & Bass = Drum and Bass")
+
+    def test_three_genres_need_only_one_rule_each(self):
+        rules=plugin.parse_rules("Rock&Roll = Rock&Roll\nRhythm&Blues = R&B\nDrum&Bass = Drum 'n' Bass")
+        for left,right,target in [('rock','roll','Rock&Roll'),('Rhythm','Blues','R&B'),('drum','bass',"Drum 'n' Bass")]:
+            for connector in [' and ', ' n ', " 'n' ", '&', " 'n'", ' ‘n’ ']:
+                self.assertEqual(plugin.normalize([left+connector+right],rules),[target])
+                self.assertEqual(self.c.normalized([left+connector+right]),[target])
+
+    def test_default_full_name_and_abbreviations_merge(self):
+        for value in ['RnB','rnb','RNB','r&b','R & B','R n B','R and B']:
+            self.assertEqual(self.c.normalized([value]),['R&B'])
+        self.assertEqual(self.c.normalized(['Rhythm and Blues; RnB; r&b']),['R&B'])
+        self.assertEqual(self.c.normalized(["drum 'n'bass"]),["Drum 'n' Bass"])
+        self.assertEqual(self.c.normalized(['rock n roll']),['Rock&Roll'])
 
     def test_auto_toggle(self):
         a=self.album(['Electronica'])

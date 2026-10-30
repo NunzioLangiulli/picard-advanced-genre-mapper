@@ -1,6 +1,6 @@
-# Advanced Genre Mapper for MusicBrainz Picard
+# Advanced Genre Mapper
 
-**Version:** 1.2.3 · **Author:** Borunzio · **Target:** Picard 3.0.2
+**Version:** 1.2.8 · **Author:** Borunzio · **Target:** Picard 3.0.2
 
 Normalize genre spelling and review album-level genres without mixing the original data sources.
 
@@ -35,12 +35,11 @@ Lists with identical genres in different orders count as the same list.
 Each matched track casts one vote. For multiple files linked to the same
 track, the first non-empty normalized file list is used.
 Empty lists are ignored. A tie is resolved using the first tied list in
-album track order. If all lists are empty, the album is left unchanged.
+album track order. If all original-file lists are empty, the plugin uses the most frequent complete list among current track genres (the New value column). If both sources are empty, nothing changes.
 Load all tracks and all discs before applying or saving.
 This policy is fixed, not an optional selection strategy.
 
-Only original file genres are used for this vote. MusicBrainz metadata is
-kept separate. Inputs are captured once per loaded file, preventing an early
+Original file genres take priority. If none remain after normalization, current track genres are counted separately as a fallback. Original and current sources are never mixed in one count. The plugin remembers its own output so applying repeatedly does not distort the counts. Inputs are captured once per loaded file, preventing an early
 partial-album result from distorting later votes. Remove and reload files
 after changing source tags on disk. Saved results become the original genres
 when files are loaded again.
@@ -87,7 +86,7 @@ An applied comparison choice takes priority over automatic file voting for
 that loaded album, including when more files arrive and before saving.
 It is kept in memory only, until the album is removed or Picard closes.
 Restore genres from existing files removes this override and immediately applies the
-original-file voting rule. If every original list is empty, tags stay unchanged.
+original-file voting rule. If every original list is empty, current track genres provide the fallback.
 Closing the comparison without applying discards its draft.
 
 
@@ -161,6 +160,67 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 MIT License. Copyright (c) 2026 Borunzio. See [LICENSE](LICENSE).
 
-Version display: install the v1.2.3 Git tag to show that version reference
+Version display: install the v1.2.8 Git tag to show that version reference
 in Picard. Installing main can show the branch instead. The options page
 also displays the manifest version and author.
+
+## Empty original genre tags
+
+Automatic processing and Apply album genre rules now use the same selection: original file lists first; if all are empty after normalization, current New value lists instead. The most frequent complete list is applied to every matched file. Repeated processing excludes the plugin's own output from the input counts. Tracks without linked files are left untouched until their files arrive.
+
+## Equivalent connectors: one rule per genre
+
+The matching engine treats `and`, `n`, `'n'` and `&` as equivalent connectors.
+You do not need one alias rule for each connector spelling. This behavior
+has been available since 1.2.5; version 1.2.6 adds the missing default genre
+mappings and examples, without changing the matching engine.
+
+The current defaults include these rules:
+
+```text
+Rock&Roll = Rock&Roll
+Rhythm&Blues = R&B
+R&B = R&B
+RnB = R&B
+Drum&Bass = Drum 'n' Bass
+```
+
+| Input examples | Output |
+| --- | --- |
+| rock and roll; rock n roll; rock 'n' roll; Rock&Roll | Rock&Roll |
+| Rhythm and Blues; Rhythm n Blues; Rhythm 'n' Blues; Rhythm&Blues | R&B |
+| r&b; R & B; R n B; R and B; RnB; rnb | R&B |
+| drum and bass; drum n bass; drum 'n'bass; Drum&Bass | Drum 'n' Bass |
+
+The left side identifies the genre; the right side sets its exact output
+spelling. Rhythm&Blues, R&B and RnB all produce R&B. If several of these
+forms appear in an input list, the output contains R&B only once.
+R&B = R&B declares the canonical spelling; the other rules are input aliases.
+RnB needs its own alias because its n is inside a word; connector matching
+does not replace arbitrary letters inside words. Matching is case-insensitive,
+so additional aliases for rnb, RNB or r&b are unnecessary.
+
+Curly apostrophes and compact quoted connectors such as `Drum'n'Bass` are
+accepted. Bare n and and must be separate words, optionally separated by
+hyphens; letters inside words such as Dance or Scandinavian are not replaced.
+
+### Updating an existing installation
+
+Saved rules are preserved when updating the plugin. Add the missing rules
+above to your saved dictionary; do not reset your customized rules. Rock&Roll
+is already in the default dictionary. If you already have
+`Drum n Bass = Drum 'n' Bass`, it works exactly like the Drum&Bass rule and
+can be kept instead: there is no need to add a second equivalent alias.
+Equivalent aliases must have the same output spelling. If two rules disagree,
+Test rules reports the conflict. Edit their right-hand sides to agree or keep
+only one equivalent rule. Test rules previews changes without editing music tags.
+
+### Updating to 1.2.8
+
+Your saved dictionary is not overwritten. Replace any previous
+`Rhythm&Blues = Rhythm&Blues` rule with `Rhythm&Blues = R&B`, keep
+`R&B = R&B`, and add `RnB = R&B` if missing. Keep any equivalent full-name
+aliases consistent with the R&B output spelling. The default Drum&Bass and
+Rock&Roll rules remain included. Use Test rules before applying. Restore
+Defaults also loads the new dictionary, but resets all customized options
+and rules on this page.
