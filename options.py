@@ -21,7 +21,7 @@ class GenreOptions(OptionsPage):
             'FILE GENRES: the most frequent complete genre list among matched tracks is used for the whole album. '
             'Example: 7 tracks with Electronic; IDM and 3 with Jazz give Electronic; IDM to all 10 tracks. '
             'This counts complete lists, not individual genres. Order does not affect matching; each track is counted once. '
-            'Empty lists are ignored. Ties use the first tied list in album track order. If every list is empty, nothing changes. '
+            'Empty lists are ignored. Ties use the first tied list in album track order. If all original file lists are empty, the most frequent complete list from the current New value genres is used instead. If both sources are empty, nothing changes. '
             'Load all tracks and discs before applying. Original file genres are captured once per loaded file.')
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -58,8 +58,8 @@ class GenreOptions(OptionsPage):
             'Left = spelling to recognize. Right = spelling to write. One rule per line. '
             'Example: Electronica = Electronic changes Electronica into Electronic. '
             'Trip-Hop = Trip-Hop registers the preferred spelling: trip hop, TRIP HOP and Trip-Hop all become Trip-Hop. '
-            'Matching ignores case, spaces and hyphens. Add New Genre = New Genre to register a preferred name. '
-            'Lines starting with # are comments. Rules apply independently; changes take effect on the next application.')
+            'Matching ignores case, spaces and hyphens. Connectors and, &, n and apostrophe-quoted n are equivalent, including curly apostrophes. Add New Genre = New Genre to register a preferred name. '
+            'Lines starting with # are comments. One rule per genre handles all connector variants: Rhythm&Blues = R&B also matches Rhythm and Blues and Rhythm n Blues. Rules apply independently; changes take effect on the next application.')
         help_text.setWordWrap(True)
         rules_layout.addWidget(help_text)
         self.rules = QPlainTextEdit()

@@ -101,7 +101,12 @@ class ComparisonDialog(QDialog):
             row = self.add_row('Existing files - most frequent list')
             original = controller.original_selected_list(album)
             self.set_row(row, original, '; '.join(original), 'Available' if self.majority else 'No file genres')
-            initial = controller.overrides.get(album, self.majority)
+            if not self.majority:
+                current = controller.automatic_choice(album) or []
+                row = self.add_row('Current track genres - most frequent list')
+                self.set_row(row, current, '; '.join(current), 'Available' if current else 'No current genres')
+                self.summary.setText(self.summary.text() + ' Original file genres are empty; automatic processing uses the most frequent current track list instead.')
+            initial = controller.overrides.get(album, controller.automatic_choice(album) or [])
             self.final.setText('; '.join(controller.normalized(initial)))
         except ValueError as error:
             self.majority = []
@@ -240,5 +245,5 @@ class ComparisonDialog(QDialog):
             return
         self.controller.overrides.pop(self.album, None)
         self.controller.apply(self.album)
-        self.final.setText('; '.join(self.controller.file_choice(self.album) or []))
-        self.notice.setText('Selection from existing files restored. If all original lists are empty, existing tags are left unchanged.')
+        self.final.setText('; '.join(self.controller.automatic_choice(self.album) or []))
+        self.notice.setText('Selection from existing files restored. If original lists are empty, the most frequent current track list is used instead.')
