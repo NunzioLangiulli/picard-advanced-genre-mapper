@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.12
+
+- Align README, plugin description, options help and comparison messages with initial Lookup selection, ongoing current-value uniformity and explicit manual actions.
+- Clarify cached manual fallback versus live current-value counting, comparison draft initialization, partial albums, unknown-only results and unanimous manual edits.
+- Explain that output-setting changes do not automatically rewrite unanimous albums and that the example tester does not simulate selection or storage.
+- Documentation and interface wording only; genre-processing behavior is unchanged from 1.2.11.
+
+## 1.2.11
+
+- Keep complete albums uniform using the most frequent normalized complete list from current file genres after two stable checks.
+- Preserve unanimous manual changes exactly and never restore original genres or saved comparison choices during ongoing synchronization.
+- Keep summary-only behavior when automatic processing is disabled; saving still triggers no rules.
+- Add regression coverage for 9-to-1 majorities, whole-album edits, aliases, ties, partial albums and batch stability.
+
+## 1.2.10
+
+- Synchronize the album row with unanimous current file genres without applying rules or modifying tracks/files.
+- Preserve exact manual spelling, order and multiple values; clear mixed or partial summaries.
+- Refresh already-loaded albums independently of automatic normalization and stop on disable.
+- Add regression tests for manual edits, mixed/empty values, partial albums and refresh scope.
+
+## 1.2.9
+
+- Apply automatically only once after the first complete album match.
+- Remove the pre-save processor so manual genre edits survive saving with automatic processing enabled.
+- Wait for all tracks to be matched; refreshes and later matching events do not repeat completed processing.
+- Keep explicit manual actions available and cancel pending automatic application after a manual application.
+- Add Rate Your Music artist and album links with search fallback in the comparison dialog.
+- Update options, documentation and regression tests.
+
 ## 1.2.8
 
 - Normalize Rhythm&Blues, R&B and RnB to the single canonical spelling R&B.

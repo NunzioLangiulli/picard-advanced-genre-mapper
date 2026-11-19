@@ -3,6 +3,7 @@ from collections import Counter
 import re
 from uuid import UUID
 from weakref import ref
+from urllib.parse import urlencode, urlsplit
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
@@ -45,6 +46,26 @@ def source_changes(names, controller):
     return '\n'.join(dict.fromkeys(changes)) or 'No changes'
 
 
+def rym_search(kind, artist, title=''):
+    """Search instead of guessing an album or artist page slug."""
+    query = ' '.join(part.strip() for part in (artist, title) if part.strip())
+    return 'https://rateyourmusic.com/search?' + urlencode(
+        {'searchtype': 'a' if kind == 'artist' else 'l', 'searchterm': query})
+
+
+def rym_relation(document, kind):
+    """Accept only relevant RYM links explicitly supplied by MusicBrainz."""
+    for relation in document.get('relations', []):
+        url = relation.get('url', {}).get('resource', '')
+        parsed = urlsplit(url)
+        prefix = '/artist/' if kind == 'artist' else '/release/'
+        if (parsed.scheme in ('http', 'https')
+                and parsed.hostname in ('rateyourmusic.com', 'www.rateyourmusic.com')
+                and parsed.path.startswith(prefix)):
+            return url
+    return None
+
+
 class ComparisonDialog(QDialog):
     def __init__(self, controller, album):
         super().__init__()
@@ -57,6 +78,21 @@ class ComparisonDialog(QDialog):
         layout = QVBoxLayout(self)
         heading = QLabel(str(album.metadata.get('album', 'Album')))
         layout.addWidget(heading)
+        self.rym_urls = {}
+        self.rym_buttons = {}
+        artist = str(album.metadata.get('albumartist', '') or '')
+        title = str(album.metadata.get('album', '') or '')
+        links = QHBoxLayout()
+        layout.addLayout(links)
+        for kind in ('artist', 'album'):
+            self.rym_urls[kind] = rym_search(kind, artist, title if kind == 'album' else '')
+            button = QPushButton('Search RYM ' + kind)
+            button.setEnabled(bool(artist.strip() if kind == 'artist' else title.strip()))
+            button.setToolTip('Search Rate Your Music in your browser. If MusicBrainz supplies an exact link, this button opens that page instead.')
+            button.clicked.connect(lambda checked=False, target=kind: self.open_rym(target))
+            links.addWidget(button)
+            self.rym_buttons[kind] = button
+        links.addStretch()
         help_text = QLabel('Each row compares the original genres with the result of your rules for that same source. MusicBrainz rows show all official genres with positive votes '
             '(vote counts in parentheses); Picard genre filters are not applied here. Artist genres describe the artist, '
             'not necessarily this album. Select one or more rows to use or merge them. Retrieval status reports loading, success, missing genres or errors; it does not rate genre accuracy. Fetching never changes tags.')
@@ -116,6 +152,20 @@ class ComparisonDialog(QDialog):
     def closed(self, result):
         self.alive = False
 
+    def open_rym(self, kind):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        if not QDesktopServices.openUrl(QUrl(self.rym_urls[kind])):
+            self.notice.setText('Could not open the browser. URL: ' + self.rym_urls[kind])
+
+    def set_rym_link(self, kind, document):
+        url = rym_relation(document, kind)
+        if url:
+            self.rym_urls[kind] = url
+            self.rym_buttons[kind].setText('Open RYM ' + kind)
+            self.rym_buttons[kind].setToolTip(url)
+            self.rym_buttons[kind].setEnabled(True)
+
     def add_row(self, name):
         row = self.table.rowCount()
         self.table.insertRow(row)
@@ -165,7 +215,7 @@ class ComparisonDialog(QDialog):
         if cache_key in self.controller.mb_cache:
             received(self.controller.mb_cache[cache_key], None, None)
             return
-        includes = 'genres+artists+release-groups' if entity == 'release' else 'genres'
+        includes = 'genres+artists+release-groups+url-rels' if entity == 'release' else 'genres+url-rels'
         try:
             self.controller.api.mb_api.get('/' + entity + '/' + identifier, received,
                 unencoded_queryargs={'inc': includes, 'fmt': 'json'},
@@ -181,8 +231,12 @@ class ComparisonDialog(QDialog):
         self.request('release', identifier, row, self.fetch_related)
 
     def fetch_related(self, release):
+        self.set_rym_link('album', release)
         row = self.add_row('MusicBrainz release group')
-        self.request('release-group', release.get('release-group', {}).get('id'), row)
+        self.request('release-group', release.get('release-group', {}).get('id'), row,
+                     lambda node: self.set_rym_link('album', node))
+        artist_ids = {credit.get('artist', {}).get('id') for credit in release.get('artist-credit', [])
+                      if isinstance(credit, dict) and credit.get('artist', {}).get('id')}
         seen = set()
         for credit in release.get('artist-credit', []):
             if not isinstance(credit, dict):
@@ -193,7 +247,9 @@ class ComparisonDialog(QDialog):
                 continue
             seen.add(identifier)
             row = self.add_row('MusicBrainz artist: ' + artist.get('name', 'Unknown artist'))
-            self.request('artist', identifier, row)
+            # A collaboration must not silently link to only one of its artists.
+            callback = (lambda node: self.set_rym_link('artist', node)) if len(artist_ids) == 1 else None
+            self.request('artist', identifier, row, callback)
         if not seen:
             row = self.add_row('MusicBrainz album artists')
             self.status(row, 'No artist credits returned')
@@ -238,7 +294,7 @@ class ComparisonDialog(QDialog):
             return
         self.controller.overrides[self.album] = values
         self.controller.apply(self.album)
-        self.notice.setText('Applied to every track. This choice overrides automatic selection from existing files for this loaded album. Save files in Picard when ready.')
+        self.notice.setText('Applied to all matched tracks. This choice is remembered for explicit manual applications only. Later current-value differences follow the automatic majority policy; unanimous manual edits are preserved. Save in Picard when ready.')
 
     def reset_majority(self):
         if not self.controller.active:
@@ -246,4 +302,4 @@ class ComparisonDialog(QDialog):
         self.controller.overrides.pop(self.album, None)
         self.controller.apply(self.album)
         self.final.setText('; '.join(self.controller.automatic_choice(self.album) or []))
-        self.notice.setText('Selection from existing files restored. If original lists are empty, the most frequent current track list is used instead.')
+        self.notice.setText('Remembered comparison choice removed; original-file selection applied. If original lists are empty after normalization, the current-value fallback is used. Save in Picard when ready.')

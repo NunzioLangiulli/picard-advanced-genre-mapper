@@ -15,21 +15,28 @@ class GenreOptions(OptionsPage):
         super().__init__(parent=parent)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel('Advanced Genre Mapper ' + PLUGIN_INFO['version'] + ' | Author: Borunzio'))
-        self.automatic = QCheckBox('Automatically apply after Lookup / file matching and before saving')
+        self.automatic = QCheckBox('Automatically normalize after first Lookup and keep current album genres uniform')
         layout.addWidget(self.automatic)
         explanation = QLabel(
-            'FILE GENRES: the most frequent complete genre list among matched tracks is used for the whole album. '
-            'Example: 7 tracks with Electronic; IDM and 3 with Jazz give Electronic; IDM to all 10 tracks. '
-            'This counts complete lists, not individual genres. Order does not affect matching; each track is counted once. '
-            'Empty lists are ignored. Ties use the first tied list in album track order. If all original file lists are empty, the most frequent complete list from the current New value genres is used instead. If both sources are empty, nothing changes. '
-            'Load all tracks and discs before applying. Original file genres are captured once per loaded file.')
+            'FIRST LOOKUP: after every track has a file and no unmatched files remain, apply the most frequent complete normalized genre list from original files. '
+            'If no original list survives normalization, use the current-value fallback. This original-source step runs once per loaded album. '
+            'Count complete lists, not individual genres: 7 tracks with Electronic; IDM and 3 with Jazz give Electronic; IDM to all 10. '
+            'Each track counts once; empty lists are ignored and ties use the first tied list in track order.')
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
+        summary_help = QLabel(
+            'AFTER LOOKUP: with automatic processing enabled, unify differing CURRENT file genres after two unchanged checks (about 1-2 seconds). '
+            'Nine Jazz tracks and one Rock track become all Jazz. Changing every track to Rock keeps Rock exactly, without spelling or output-format changes. '
+            'Select the whole album for a manual change; a minority edit may be replaced. Partial albums are not automatically unified. '
+            'With the checkbox off, only the album summary is refreshed. Save never triggers processing; wait for the genres to settle before saving.')
+        summary_help.setWordWrap(True)
+        layout.addWidget(summary_help)
         comparison_help = QLabel(
-            'Right-click an album > Plugins > Compare album genres... to compare file genres with MusicBrainz '
-            'release, release-group and album-artist genres. Fetching does not change tags. '
-            'A result you apply there takes priority over automatic selection from existing files for this loaded album. '
-            'Use Restore genres from existing files in that window to remove the override. Overrides last until the album is removed or Picard closes.')
+            'MANUAL ACTIONS: Apply album genre rules now runs explicitly, even with the checkbox off or for a partial album. '
+            'It uses an applied comparison choice first, otherwise original files and then the current-value fallback; it can replace later manual edits. '
+            'Compare album genres... retrieves independent sources without applying them. Apply to entire album changes all matched tracks. '
+            'Its choice is remembered for later manual applications, not enforced by the timer or Save. Restore genres from existing files removes that choice. '
+            'Choices last for the loaded album/session. Remove and reload an album to allow a new initial Lookup selection.')
         comparison_help.setWordWrap(True)
         layout.addWidget(comparison_help)
         form = QFormLayout()
@@ -49,7 +56,7 @@ class GenreOptions(OptionsPage):
         output_help = QLabel(
             'Single text value stores "Electronic; IDM" as one string, including the punctuation. '
             'Multiple tag values stores Electronic and IDM as separate genre entries; the file format and player '
-            'determine how they are written and displayed. Select Single text value to keep literal semicolon-space formatting.')
+            'determine how they are written and displayed. Single text value writes literal semicolon-space formatting when rules are applied. Output and spelling options do not rewrite an already unanimous current album automatically.')
         output_help.setWordWrap(True)
         layout.addWidget(output_help)
         rules_box = QGroupBox('Genre spelling rules')
@@ -69,7 +76,7 @@ class GenreOptions(OptionsPage):
         layout.addSpacing(12)
         preview_box = QGroupBox('Try the rules on an example')
         preview_layout = QVBoxLayout(preview_box)
-        preview_help = QLabel('This test checks the rules and previews the example below. It does not change your music tags.')
+        preview_help = QLabel('Checks spelling rules, input separators and unknown-genre handling for this example only. It does not simulate album selection, output sorting or storage format, and does not change tags.')
         preview_help.setWordWrap(True)
         preview_layout.addWidget(preview_help)
         preview_row = QHBoxLayout()

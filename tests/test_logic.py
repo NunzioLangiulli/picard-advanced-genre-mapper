@@ -22,7 +22,7 @@ spec=importlib.util.spec_from_file_location('mapper',path,submodule_search_locat
 plugin=importlib.util.module_from_spec(spec)
 sys.modules['mapper']=plugin
 spec.loader.exec_module(plugin)
-from mapper.comparison import ComparisonDialog,genre_names,source_changes
+from mapper.comparison import ComparisonDialog,genre_names,source_changes,rym_search,rym_relation
 
 class Metadata(dict):
     def getall(self,key):
@@ -30,7 +30,7 @@ class Metadata(dict):
         return ([value] if value else []) if isinstance(value,str) else list(value)
 class Item:
     def __init__(self,**kw): self.__dict__.update(kw)
-    def update(self): pass
+    def update(self, **kwargs): pass
 
 class Tests(unittest.TestCase):
     def setUp(self):
@@ -39,7 +39,7 @@ class Tests(unittest.TestCase):
         self.c=plugin.Controller(self.api)
         plugin._controller=self.c
     def album(self,values):
-        a=Item(tracks=[],metadata=Metadata(),id='11111111-1111-4111-8111-111111111111')
+        a=Item(tracks=[],metadata=Metadata(),loaded=True,get_num_unmatched_files=lambda:0,id='11111111-1111-4111-8111-111111111111')
         for value in values:
             t=Item(files=[],metadata=Metadata(),album=a)
             f=Item(orig_metadata=Metadata(genre=value),metadata=Metadata(genre=value,cover='unchanged'),parent_item=t)
@@ -88,7 +88,7 @@ class Tests(unittest.TestCase):
         self.c.apply(a)
         self.assertNotIn('genre',a.metadata)
         a.tracks[0].files[0].metadata['genre']='Electronica'
-        plugin.before_save(self.api,a.tracks[0].files[0])
+        self.c.apply(a)
         self.assertTrue(all(t.files[0].metadata['genre']=='Electronic' for t in a.tracks))
 
     def test_original_priority_and_unmatched_template(self):
@@ -107,7 +107,7 @@ class Tests(unittest.TestCase):
         self.c.apply(a)
         self.assertEqual(a.metadata['genre'],'Rap')
         self.c.overrides[a]=['Electronica','IDM']
-        plugin.before_save(self.api,a.tracks[0].files[0])
+        self.c.apply(a)
         self.assertEqual(a.metadata['genre'],'Electronic; IDM')
         self.c.overrides.pop(a)
         self.c.apply(a)
@@ -163,7 +163,8 @@ class Tests(unittest.TestCase):
         rows=[]
         calls=[]
         d.add_row=lambda text:rows.append(text) or len(rows)-1
-        d.request=lambda entity,identifier,row:calls.append((entity,identifier,row))
+        d.request=lambda entity,identifier,row,on_success=None:calls.append((entity,identifier,row))
+        d.set_rym_link=lambda *args:None
         release={'release-group':{'id':'group'},'artist-credit':[{'artist':{'id':'a','name':'A'}},{'artist':{'id':'a','name':'A'}},{'artist':{'id':'b','name':'B'}}]}
         d.fetch_related(release)
         self.assertEqual([c[0] for c in calls],['release-group','artist','artist'])
@@ -222,10 +223,222 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.c.normalized(["drum 'n'bass"]),["Drum 'n' Bass"])
         self.assertEqual(self.c.normalized(['rock n roll']),['Rock&Roll'])
 
+    def run_scheduled(self, album):
+        callbacks = []
+        original = plugin.QTimer.singleShot
+        plugin.QTimer.singleShot = lambda delay, callback: callbacks.append(callback)
+        try:
+            self.c.schedule(album)
+            for callback in callbacks:
+                callback()
+        finally:
+            plugin.QTimer.singleShot = original
+
+    def test_initial_application_then_manual_edits_survive_events(self):
+        albums = [self.album(['Electronica', 'Jazz']), self.album(['Rap', 'Rap'])]
+        for album in albums:
+            self.run_scheduled(album)
+            self.assertTrue(album._advanced_genre_mapper_applied)
+            for track in album.tracks:
+                track.files[0].metadata['genre'] = 'My Manual Genre'
+            self.run_scheduled(album)
+            self.c = plugin.Controller(self.api)
+            self.run_scheduled(album)
+            self.assertTrue(all(t.files[0].metadata['genre'] == 'My Manual Genre' for t in album.tracks))
+
+    def test_partial_album_waits_for_last_track(self):
+        album = self.album(['Jazz', 'Rap', 'Rap'])
+        last = album.tracks[-1]
+        file = last.files.pop()
+        self.run_scheduled(album)
+        self.assertFalse(getattr(album, '_advanced_genre_mapper_applied', False))
+        self.assertEqual(album.tracks[0].files[0].metadata['genre'], 'Jazz')
+        last.files.append(file)
+        self.run_scheduled(album)
+        self.assertEqual(album.metadata['genre'], 'Rap')
+
+    def test_loading_and_unmatched_files_defer_application(self):
+        album = self.album(['Electronica'])
+        album.loaded = False
+        self.run_scheduled(album)
+        self.assertNotIn('genre', album.metadata)
+        album.loaded = True
+        album.get_num_unmatched_files = lambda: 1
+        self.run_scheduled(album)
+        self.assertNotIn('genre', album.metadata)
+        album.get_num_unmatched_files = lambda: 0
+        self.run_scheduled(album)
+        self.assertEqual(album.metadata['genre'], 'Electronic')
+
+    def test_manual_action_cancels_queued_auto_but_remains_repeatable(self):
+        album = self.album(['Electronica'])
+        callbacks = []
+        original = plugin.QTimer.singleShot
+        plugin.QTimer.singleShot = lambda delay, callback: callbacks.append(callback)
+        try:
+            self.c.schedule(album)
+            plugin.ApplyAlbumGenres().callback([album])
+            album.tracks[0].files[0].metadata['genre'] = 'Manual'
+            for callback in callbacks:
+                callback()
+            self.assertEqual(album.tracks[0].files[0].metadata['genre'], 'Manual')
+            plugin.ApplyAlbumGenres().callback([album])
+            self.assertEqual(album.tracks[0].files[0].metadata['genre'], 'Electronic')
+        finally:
+            plugin.QTimer.singleShot = original
+
+    def test_no_pre_save_hook_registered(self):
+        options = ModuleType('mapper.options')
+        options.GenreOptions = object
+        previous = sys.modules.get('mapper.options')
+        sys.modules['mapper.options'] = options
+        registrations = []
+        class Config(dict):
+            def register_option(self, name, value):
+                self.setdefault(name, value)
+        class Api:
+            plugin_config = Config()
+            def __getattr__(self, name):
+                if name.startswith('register_'):
+                    return lambda *args, **kwargs: registrations.append(name)
+                raise AttributeError(name)
+        try:
+            original_start = plugin.Controller.start_display_sync
+            plugin.Controller.start_display_sync = lambda self: None
+            self.addCleanup(setattr, plugin.Controller, "start_display_sync", original_start)
+            plugin.enable(Api())
+            self.assertNotIn('register_file_pre_save_processor', registrations)
+            self.assertIn('register_file_post_addition_to_track_processor', registrations)
+            plugin.disable(None)
+        finally:
+            if previous is None:
+                sys.modules.pop('mapper.options', None)
+            else:
+                sys.modules['mapper.options'] = previous
+
+    def test_rym_search_and_verified_links(self):
+        from urllib.parse import parse_qs, urlsplit
+        url = rym_search('album', 'A & B', '中文 + Album')
+        self.assertEqual(parse_qs(urlsplit(url).query),
+                         {'searchtype': ['l'], 'searchterm': ['A & B 中文 + Album']})
+        self.assertEqual(parse_qs(urlsplit(rym_search('artist', 'A')).query)['searchtype'], ['a'])
+        for kind, path in [('artist', 'artist/name'), ('album', 'release/album/name/title')]:
+            expected = 'https://rateyourmusic.com/' + path
+            document = {'relations': [{'url': {'resource': expected}}]}
+            self.assertEqual(rym_relation(document, kind), expected)
+            document['relations'][0]['url']['resource'] = expected.replace('rateyourmusic.com', 'rateyourmusic.com.evil.test')
+            self.assertIsNone(rym_relation(document, kind))
+        self.assertIsNone(rym_relation({}, 'album'))
+
+    def test_display_sync_preserves_manual_spelling_and_files(self):
+        album = self.album(['Custom Jazz; RnB'] * 2)
+        before = [(dict(t.metadata), dict(t.files[0].metadata), dict(t.files[0].orig_metadata)) for t in album.tracks]
+        self.cfg['automatic'] = True
+        self.c.normalized = lambda values: self.fail('Display sync must not normalize')
+        self.c.apply = lambda album: self.fail('Display sync must not apply rules')
+        self.c.sync_album_display(album)
+        self.assertEqual(album.metadata.getall('genre'), ['Custom Jazz; RnB'])
+        self.assertFalse(getattr(album, '_advanced_genre_mapper_applied', False))
+        for t, old in zip(album.tracks, before):
+            self.assertEqual((dict(t.metadata), dict(t.files[0].metadata), dict(t.files[0].orig_metadata)), old)
+        for t in album.tracks:
+            t.files[0].metadata['genre'] = ['Manual', 'SECOND']
+        self.c.sync_album_display(album)
+        self.assertEqual(album.metadata.getall('genre'), ['Manual', 'SECOND'])
+
+    def test_display_sync_clears_mixed_empty_and_partial_summary(self):
+        album = self.album(['Jazz', 'Jazz'])
+        self.c.sync_album_display(album)
+        album.tracks[1].files[0].metadata['genre'] = 'Rap'
+        self.c.sync_album_display(album)
+        self.assertNotIn('genre', album.metadata)
+        self.assertEqual(album.tracks[0].files[0].metadata['genre'], 'Jazz')
+        for track in album.tracks:
+            track.files[0].metadata['genre'] = ''
+        album.metadata['genre'] = 'Stale'
+        self.c.sync_album_display(album)
+        self.assertNotIn('genre', album.metadata)
+        album.tracks[0].files[0].metadata['genre'] = 'Jazz'
+        album.tracks[1].files.clear()
+        album.metadata['genre'] = 'Stale'
+        self.c.sync_album_display(album)
+        self.assertNotIn('genre', album.metadata)
+
+    def test_display_sync_already_loaded_and_disabled_automatic(self):
+        album = self.album(['Jazz', 'Jazz'])
+        self.api.tagger = SimpleNamespace(albums={album.id: album})
+        self.cfg['automatic'] = False
+        calls = []
+        album.update = lambda **kw: calls.append(kw)
+        self.c.sync_displays()
+        self.c.sync_displays()
+        self.assertEqual(calls, [{'update_tracks': False, 'update_selection': False}])
+        self.c.active = False
+        album.tracks[0].files[0].metadata['genre'] = 'Rap'
+        self.c.sync_displays()
+        self.assertEqual(album.metadata.getall('genre'), ['Jazz'])
+
+    def test_current_majority_nine_against_one(self):
+        album = self.album(['Old Genre'] * 10)
+        for index, track in enumerate(album.tracks):
+            track.files[0].metadata['genre'] = 'Jazz' if index < 9 else 'Rock'
+        album._advanced_genre_mapper_applied = True
+        self.c.overrides[album] = ['Old Override']
+        self.c.sync_album_display(album)
+        self.assertEqual(album.tracks[-1].files[0].metadata['genre'], 'Rock')
+        self.c.sync_album_display(album)
+        self.assertEqual(album.metadata.getall('genre'), ['Jazz'])
+        self.assertTrue(all(t.files[0].metadata.getall('genre') == ['Jazz'] for t in album.tracks))
+        self.assertTrue(all(t.files[0].orig_metadata.getall('genre') == ['Old Genre'] for t in album.tracks))
+        for track in album.tracks:
+            track.files[0].metadata['genre'] = 'My Manual Rock'
+        self.c.sync_album_display(album)
+        self.c.sync_album_display(album)
+        self.assertEqual(album.metadata.getall('genre'), ['My Manual Rock'])
+        self.assertTrue(all(t.files[0].metadata.getall('genre') == ['My Manual Rock'] for t in album.tracks))
+
+    def test_current_majority_complete_lists_aliases_and_ties(self):
+        album = self.album(['Electronica|IDM', 'IDM; Electronic', 'Jazz', ''])
+        self.c.sync_album_display(album)
+        self.c.sync_album_display(album)
+        self.assertEqual(album.metadata.getall('genre'), ['Electronic; IDM'])
+        tie = self.album(['Jazz', 'Rap'])
+        self.c.sync_album_display(tie)
+        self.c.sync_album_display(tie)
+        self.assertEqual(tie.metadata.getall('genre'), ['Jazz'])
+
+    def test_current_majority_disabled_or_incomplete_does_not_write(self):
+        album = self.album(['Jazz', 'Jazz', 'Rock'])
+        self.cfg['automatic'] = False
+        self.c.sync_album_display(album)
+        self.c.sync_album_display(album)
+        self.assertEqual(album.tracks[-1].files[0].metadata['genre'], 'Rock')
+        self.cfg['automatic'] = True
+        album.get_num_unmatched_files = lambda: 1
+        self.c.sync_album_display(album)
+        self.c.sync_album_display(album)
+        self.assertEqual(album.tracks[-1].files[0].metadata['genre'], 'Rock')
+
+    def test_current_majority_waits_for_stable_batch_and_initial_run(self):
+        album = self.album(['Jazz', 'Jazz', 'Rock'])
+        self.c.pending[album] = 1
+        self.c.sync_album_display(album)
+        self.c.sync_album_display(album)
+        self.assertEqual(album.tracks[-1].files[0].metadata['genre'], 'Rock')
+        album._advanced_genre_mapper_applied = True
+        album.tracks[0].files[0].metadata['genre'] = 'Rock'
+        self.c.sync_album_display(album)
+        self.assertEqual(album.tracks[1].files[0].metadata['genre'], 'Jazz')
+        album.tracks[1].files[0].metadata['genre'] = 'Manual'
+        self.c.sync_album_display(album)
+        self.assertEqual(album.tracks[1].files[0].metadata['genre'], 'Manual')
+        self.c.sync_album_display(album)
+        self.assertEqual(album.tracks[1].files[0].metadata['genre'], 'Rock')
+
     def test_auto_toggle(self):
         a=self.album(['Electronica'])
         self.cfg['automatic']=False
-        plugin.before_save(self.api,a.tracks[0].files[0])
+        self.run_scheduled(a)
         self.assertEqual(a.tracks[0].files[0].metadata['genre'],'Electronica')
 
 if __name__=='__main__': unittest.main(verbosity=2)
